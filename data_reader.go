@@ -2,6 +2,7 @@ package telnet
 
 import (
 	"bufio"
+	"compress/gzip"
 	"errors"
 	"io"
 )
@@ -17,6 +18,8 @@ const (
 	WONT = 252
 	DO   = 253
 	DONT = 254
+
+	OPT_COMPRESS2 = 86
 )
 
 var (
@@ -66,16 +69,16 @@ var (
 //
 //	[]byte{1, 55, 2, 155, 3, 255, 4, 40, 255, 30, 20}
 type internalDataReader struct {
-	wrapped  io.Reader
+	wrapped  io.ReadWriter
 	buffered *bufio.Reader
 }
 
 // newDataReader creates a new DataReader reading from 'r'.
-func newDataReader(r io.Reader) *internalDataReader {
-	buffered := bufio.NewReader(r)
+func newDataReader(rw io.ReadWriter) *internalDataReader {
+	buffered := bufio.NewReader(rw)
 
 	reader := internalDataReader{
-		wrapped:  r,
+		wrapped:  rw,
 		buffered: buffered,
 	}
 
@@ -107,8 +110,25 @@ func (r *internalDataReader) Read(data []byte) (n int, err error) {
 			}
 
 			switch peeked[0] {
-			case WILL, WONT, DO, DONT:
+			case DO, DONT:
 				_, err = r.buffered.Discard(2)
+				if nil != err {
+					return n, err
+				}
+			case WILL, WONT:
+				_, err = r.buffered.Discard(1)
+				if nil != err {
+					return n, err
+				}
+				opt, err := r.buffered.Peek(1)
+				if nil != err {
+					return n, err
+				}
+				err = r.handleOption(opt[0])
+				if nil != err {
+					return n, err
+				}
+				_, err = r.buffered.Discard(1)
 				if nil != err {
 					return n, err
 				}
@@ -129,7 +149,8 @@ func (r *internalDataReader) Read(data []byte) (n int, err error) {
 						return n, err
 					}
 
-					if IAC == b2 {
+					switch b2 {
+					case IAC:
 						peeked, err = r.buffered.Peek(1)
 						if nil != err {
 							return n, err
@@ -149,6 +170,17 @@ func (r *internalDataReader) Read(data []byte) (n int, err error) {
 							}
 							break
 						}
+					case OPT_COMPRESS2:
+						//IAC SE
+						_, err = r.buffered.Discard(2)
+						if nil != err {
+							return n, err
+						}
+						gzReader, err := gzip.NewReader(r.wrapped)
+						if nil != err {
+							return n, err
+						}
+						r.buffered = bufio.NewReader(gzReader)
 					}
 				}
 			case SE:
@@ -177,4 +209,20 @@ func (r *internalDataReader) Read(data []byte) (n int, err error) {
 	}
 
 	return n, nil
+}
+
+func (r *internalDataReader) handleOption(opt byte) error {
+	switch opt {
+	case OPT_COMPRESS2:
+		_, err := r.wrapped.Write([]byte{IAC, DO, opt})
+		if err != nil {
+			return err
+		}
+	default:
+		_, err := r.wrapped.Write([]byte{IAC, DONT, opt})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
