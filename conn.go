@@ -55,7 +55,7 @@ func DialTo(addr string) (*Conn, error) {
 	return &clientConn, nil
 }
 
-// DialToTimeout makes a (un-secure) TELNET client connection to the the address specified by
+// DialToTimeout makes a (un-secure) TELNET client connection to the address specified by
 // 'addr'.
 // Also a timeout could be specified.
 //
@@ -73,8 +73,8 @@ func DialToTimeout(addr string, timeout time.Duration) (*Conn, error) {
 		return nil, err
 	}
 
-	dataReader := newDataReader(conn)
 	dataWriter := newDataWriter(conn)
+	dataReader := newDataReader(conn)
 
 	clientConn := Conn{
 		conn:       conn,
